@@ -1,0 +1,97 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from ipywidgets import interact, FloatSlider, Layout
+import warnings
+warnings.filterwarnings('ignore')
+
+def raised_cosine(t, alpha):
+    """Hàm tạo xung Raised Cosine"""
+    t_safe = np.where(t == 0, 1e-8, t)
+    sinc = np.sin(np.pi * t_safe) / (np.pi * t_safe)
+    cos = np.cos(np.pi * alpha * t_safe) / (1 - (2 * alpha * t_safe)**2 + 1e-8)
+    return sinc * cos
+
+def worst_case_eye_trace(t, alpha):
+    """Tính toán mép mắt trong cùng (Bị ISI tàn phá nặng nhất)"""
+    main_pulse = raised_cosine(t, alpha)
+    isi_penalty = np.zeros_like(t)
+    # Tính tổng nhiễu từ các bit lân cận (trước và sau 3 chu kỳ)
+    for k in [-3, -2, -1, 1, 2, 3]:
+        isi_penalty += np.abs(raised_cosine(t - k, alpha))
+    return main_pulse - isi_penalty
+
+def plot_simplified_concepts(isi_sag, v_threshold, alpha, jitter):
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    t = np.linspace(-1, 1, 400)
+
+    # ==========================================
+    # ĐỒ THỊ 1: NOISE MARGIN (BIÊN ĐỘ NHIỄU)
+    # ==========================================
+    ideal_pulse = np.cos(t * np.pi / 2)**2
+    inner_edge = ideal_pulse * (1 - isi_sag)
+
+    ax1.plot(t, inner_edge, 'b-', linewidth=4, label='Mép trong mắt (V_inner)')
+    ax1.axhline(v_threshold, color='k', linestyle='--', linewidth=2, label='Ngưỡng quyết định (V_threshold)')
+
+    v_inner_val = inner_edge[200] # Tại t=0
+    noise_margin = v_inner_val - v_threshold
+
+    ax1.annotate('', xy=(0, v_inner_val), xytext=(0, v_threshold),
+                 arrowprops=dict(arrowstyle='<|-|>', color='red', lw=2.5, mutation_scale=20))
+    ax1.text(0.05, (v_inner_val + v_threshold)/2, f' BIÊN ĐỘ NHIỄU\n = {noise_margin:.2f} V',
+             color='red', fontsize=12, fontweight='bold')
+
+    ax1.set_title('NOISE MARGIN (BIÊN ĐỘ NHIỄU)', fontsize=14, fontweight='bold')
+    ax1.set_ylim(-0.2, 1.2)
+    ax1.grid(True, linestyle=':', alpha=0.7)
+    ax1.legend(loc='upper right')
+    ax1.set_xlabel('Thời gian (Trục ngang)')
+    ax1.set_ylabel('Điện áp (Trục dọc)')
+
+    # ==========================================
+    # ĐỒ THỊ 2: TIMING SENSITIVITY (ĐỘ NHẠY THỜI GIAN & JITTER)
+    # ==========================================
+    # Sử dụng hàm biên dạng mắt thực tế thay vì 1 xung đơn lẻ
+    eye_trace = worst_case_eye_trace(t, alpha)
+
+    # Không để đồ thị bị âm quá mức gây rối mắt
+    eye_trace = np.clip(eye_trace, -0.2, 1.2)
+
+    ax2.plot(t, eye_trace, 'g-', linewidth=4, label=f'Biên dạng mắt (Alpha={alpha:.1f})')
+
+    # Điểm lấy mẫu tối ưu
+    opt_idx = 200
+    v_optimal = eye_trace[opt_idx]
+    ax2.plot(0, v_optimal, 'ro', markersize=10, label='Điểm lấy mẫu TỐI ƯU')
+
+    # Điểm lấy mẫu thực tế (Bị lệch Jitter)
+    jit_idx = np.argmin(np.abs(t - jitter))
+    v_jitter = eye_trace[jit_idx]
+    ax2.plot(jitter, v_jitter, 'X', color='orange', markersize=12, label='Điểm lấy mẫu THỰC TẾ')
+
+    # Mũi tên sụt áp
+    if jitter > 0:
+        ax2.annotate('', xy=(jitter, v_optimal), xytext=(jitter, v_jitter),
+                     arrowprops=dict(arrowstyle='->', color='orange', lw=2.5, mutation_scale=20))
+        voltage_drop = v_optimal - v_jitter
+        ax2.text(jitter + 0.03, (v_optimal + v_jitter)/2, f' SỤT ÁP\n = -{voltage_drop:.2f} V',
+                 color='orange', fontsize=12, fontweight='bold')
+
+    ax2.axvline(0, color='r', linestyle=':', alpha=0.5)
+    ax2.axvline(jitter, color='orange', linestyle=':', alpha=0.5)
+
+    ax2.set_title('TIMING SENSITIVITY (ĐỘ NHẠY THỜI GIAN)', fontsize=14, fontweight='bold')
+    ax2.set_ylim(-0.2, 1.2)
+    ax2.grid(True, linestyle=':', alpha=0.7)
+    ax2.legend(loc='lower center')
+    ax2.set_xlabel('Thời gian bị lệch (Jitter)')
+
+    plt.tight_layout()
+    plt.show()
+
+# --- THANH TRƯỢT ĐIỀU KHIỂN ---
+interact(plot_simplified_concepts,
+         isi_sag=FloatSlider(value=0.2, min=0.0, max=0.6, step=0.05, description='1. Độ võng xuyên âm (ISI):', style={'description_width': 'initial'}, layout=Layout(width='500px')),
+         v_threshold=FloatSlider(value=0.0, min=-0.3, max=0.4, step=0.05, description='2. Ngưỡng điện áp (Threshold):', style={'description_width': 'initial'}, layout=Layout(width='500px')),
+         alpha=FloatSlider(value=0.1, min=0.1, max=1.0, step=0.1, description='3. Độ phẳng của đỉnh (Alpha):', style={'description_width': 'initial'}, layout=Layout(width='500px')),
+         jitter=FloatSlider(value=0.2, min=0.0, max=0.6, step=0.05, description='4. Độ lệch thời gian (Jitter):', style={'description_width': 'initial'}, layout=Layout(width='500px')))
